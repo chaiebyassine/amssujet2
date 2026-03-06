@@ -103,7 +103,7 @@ def main():
     ap.add_argument("--train", default="train.txt")
     ap.add_argument("--eval", default="eval.txt")
     ap.add_argument("--cell", choices=["rnn","lstm","gru"], default="lstm")
-    ap.add_argument("--epochs", type=int, default=3)
+    ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--emb", type=int, default=64)
     ap.add_argument("--hidden", type=int, default=128)
@@ -116,7 +116,12 @@ def main():
     ap.add_argument("--mode", choices=["train","gen"], default="train")
     ap.add_argument("--out", default="10k.txt")
     ap.add_argument("--n", type=int, default=10000)
+    ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("device:", device)
@@ -127,7 +132,6 @@ def main():
     vocab, stoi, itos = build_vocab(train_lines)
     pad_id = stoi["<PAD>"]
 
-    # construire séquences
     train_seqs = []
     for s in train_lines[:args.limit_train]:
         ids = encode(s, stoi)
@@ -150,15 +154,18 @@ def main():
         pad_id=pad_id
     ).to(device)
 
+    total_params = sum(p.numel() for p in model.parameters())
+    print("Total parameters:", total_params)
+
     ckpt = f"model_{args.cell}.pt"
 
     if args.mode == "train":
         opt = torch.optim.Adam(model.parameters(), lr=args.lr)
         loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id)
-
         best_eval = float("inf")
 
         print(f"Train seq: {len(train_seqs)} | Eval seq: {len(eval_seqs)} | Vocab: {len(vocab)} | cell={args.cell}")
+
         for ep in range(1, args.epochs+1):
             model.train()
             total_loss, total_tok = 0.0, 0
@@ -180,6 +187,7 @@ def main():
             train_nll = total_loss / max(1, total_tok)
             train_ppl = math.exp(min(50.0, train_nll))
             eval_nll, eval_ppl = evaluate(model, eval_seqs, args.batch, pad_id, device)
+
             print(f"Epoch {ep}/{args.epochs} | train_ppl={train_ppl:.2f} | eval_ppl={eval_ppl:.2f} | {int(time.time()-start)}s")
 
             if eval_nll < best_eval:
@@ -189,16 +197,24 @@ def main():
         print("Saved best model to", ckpt)
 
     else:  # gen
+        if not Path(ckpt).exists():
+            print("ERROR: model file not found:", ckpt)
+            return
+
         saved = torch.load(ckpt, map_location=device)
         model.load_state_dict(saved["state"])
         stoi = saved["stoi"]
         itos = saved["itos"]
         model.eval()
 
+        print(f"Generating {args.n} passwords with temperature={args.temperature}")
+
         with open(args.out, "w", encoding="utf-8") as f:
             for _ in range(args.n):
-                f.write(generate(model, stoi, itos, device, max_len=args.max_len) + "\n")
-        print("Generated:", args.out, "with", args.n, "passwords")
+                pw = generate(model, stoi, itos, device, max_len=args.max_len, temperature=args.temperature)
+                f.write(pw + "\n")
+
+        print("Saved generated passwords to:", args.out)
 
 if __name__ == "__main__":
     main()

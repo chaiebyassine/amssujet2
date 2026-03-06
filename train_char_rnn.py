@@ -136,10 +136,21 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # 🔥 تحميل البيانات
     train_lines = load_lines(args.train)
     eval_lines  = load_lines(args.eval)
 
-    vocab, stoi, itos = build_vocab(train_lines)
+    # 🔥 دمج + خلط
+    all_lines = train_lines + eval_lines
+    random.shuffle(all_lines)
+
+    # 🔥 تقسيم 80/20 جديد
+    split = int(0.8 * len(all_lines))
+    train_lines = all_lines[:split]
+    eval_lines  = all_lines[split:]
+
+    # 🔥 بناء vocab من الكل
+    vocab, stoi, itos = build_vocab(all_lines)
     pad_id = stoi["<PAD>"]
 
     train_ds = make_dataset(train_lines, stoi, args.max_len)
@@ -150,7 +161,7 @@ def main():
         emb=args.emb,
         hidden=args.hidden,
         layers=args.layers,
-        dropout=0.1,
+        dropout=0.2,
         cell=args.cell
     ).to(device)
 
@@ -158,7 +169,8 @@ def main():
     loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id)
 
     print(f"Device: {device}")
-    print(f"Cell: {args.cell} | Vocab: {len(vocab)} | Train seq: {len(train_ds)} | Eval seq: {len(eval_ds)}")
+    print(f"Cell: {args.cell} | Vocab: {len(vocab)}")
+    print(f"Train seq: {len(train_ds)} | Eval seq: {len(eval_ds)}")
 
     for epoch in range(1, args.epochs+1):
         model.train()
@@ -183,11 +195,12 @@ def main():
 
         eval_nll, eval_ppl = evaluate(model, eval_ds, args.batch, pad_id, device)
 
-        print(f"Epoch {epoch}/{args.epochs} | train_nll={train_nll:.4f} train_ppl={train_ppl:.2f} | eval_nll={eval_nll:.4f} eval_ppl={eval_ppl:.2f}")
+        print(f"Epoch {epoch}/{args.epochs} | "
+              f"train_ppl={train_ppl:.2f} | "
+              f"eval_ppl={eval_ppl:.2f}")
 
-    print("\nExemples générés :")
+    print("\nGenerated examples:")
     for _ in range(args.gen_n):
-        print(generate(model, stoi, itos, device, max_len=12, temperature=1.0))
-
+        print(generate(model, stoi, itos, device, max_len=16, temperature=0.8))
 if __name__ == "__main__":
     main()
